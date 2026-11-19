@@ -20,12 +20,38 @@ export class BookingsService {
   //  - create and return the booking
   // Read first, check in JavaScript, then update is NOT enough: see the last e2e test.
   create(eventId: number, dto: CreateBookingDto): Promise<Booking> {
-    throw new Error('TODO C1');
+    return this.prisma.$transaction(async (tx) => {
+      const event = await tx.event.findUnique({ where: { id: eventId } });
+      if (!event) throw new NotFoundException(`Event ${eventId} not found`);
+      const { count } = await tx.event.updateMany({
+        where: {
+          id: eventId,
+          booked: { lte: event.capacity - dto.seats },
+        },
+        data: { booked: { increment: dto.seats } },
+      });
+
+      if (count === 0) {
+        const left = event.capacity - event.booked;
+        throw new ConflictException(`Only ${left} seat(s) left`);
+      }
+
+      return tx.booking.create({ data: { ...dto, eventId } });
+    });
   }
 
   // TODO C2: 404 if the booking does not exist; otherwise delete it AND give its seats
   // back to the event, both in one transaction (the array form of $transaction is enough)
   async remove(id: number): Promise<void> {
-    throw new Error('TODO C2');
+    const booking = await this.prisma.booking.findUnique({ where: { id } });
+    if (!booking) throw new NotFoundException(`Booking ${id} not found`);
+
+    await this.prisma.$transaction([
+      this.prisma.event.update({
+        where: { id: booking.eventId },
+        data: { booked: { decrement: booking.seats } },
+      }),
+      this.prisma.booking.delete({ where: { id } }),
+    ]);
   }
 }
